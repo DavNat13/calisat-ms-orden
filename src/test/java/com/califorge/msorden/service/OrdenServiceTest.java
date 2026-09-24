@@ -5,8 +5,10 @@ import com.califorge.msorden.client.EnviosClient;
 import com.califorge.msorden.client.InventarioClient;
 import com.califorge.msorden.client.NotificacionEventoDto;
 import com.califorge.msorden.client.NotificacionesClient;
+import com.califorge.msorden.config.RabbitConfig;
 import com.califorge.msorden.dto.OrdenCreateRequest;
 import com.califorge.msorden.dto.OrdenItemRequest;
+import com.califorge.msorden.dto.OrdenMensaje;
 import com.califorge.msorden.exception.TransicionNoPermitidaException;
 import com.califorge.msorden.model.EstadoOrden;
 import com.califorge.msorden.model.Orden;
@@ -21,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -66,6 +69,9 @@ class OrdenServiceTest {
 
     @Mock
     private NotificacionesClient notificacionesClient;
+
+    @Mock
+    private RabbitTemplate rabbitTemplate;
 
     @InjectMocks
     private OrdenService ordenService;
@@ -336,6 +342,95 @@ class OrdenServiceTest {
         ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.EN_PREPARACION);
 
         verify(enviosClient).crear(any());
+    }
+
+    @Test
+    void cambiarEstado_aPagada_publicaOrdenConfirmadaEnRabbit() {
+        Orden orden = orden(EstadoOrden.PENDIENTE);
+        orden.setId(UUID.randomUUID());
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenItemRepository.findByOrdenId(orden.getId())).thenReturn(List.of());
+
+        ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.PAGADA);
+
+        ArgumentCaptor<OrdenMensaje> mensajeCaptor = ArgumentCaptor.forClass(OrdenMensaje.class);
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitConfig.ROUTING_KEY_ORDEN_CONFIRMADA), mensajeCaptor.capture());
+        OrdenMensaje mensaje = mensajeCaptor.getValue();
+        assertEquals(orden.getId().toString(), mensaje.ordenId());
+        assertEquals(SUB, mensaje.usuarioSub());
+        assertEquals("ORDEN_CONFIRMADA", mensaje.evento());
+        assertEquals("PAGADA", mensaje.estado());
+        assertEquals("25.50", mensaje.total());
+    }
+
+    @Test
+    void cambiarEstado_aCancelada_publicaOrdenCanceladaEnRabbit() {
+        Orden orden = orden(EstadoOrden.PENDIENTE);
+        orden.setId(UUID.randomUUID());
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.CANCELADA);
+
+        ArgumentCaptor<OrdenMensaje> mensajeCaptor = ArgumentCaptor.forClass(OrdenMensaje.class);
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitConfig.ROUTING_KEY_ORDEN_CANCELADA), mensajeCaptor.capture());
+        assertEquals("ORDEN_CANCELADA", mensajeCaptor.getValue().evento());
+        assertEquals("CANCELADA", mensajeCaptor.getValue().estado());
+    }
+
+    @Test
+    void cancelar_publicaOrdenCanceladaEnRabbit() {
+        Orden orden = orden(EstadoOrden.EN_PREPARACION);
+        orden.setId(UUID.randomUUID());
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenItemRepository.findByOrdenId(orden.getId())).thenReturn(List.of());
+
+        ordenService.cancelar(orden.getId(), SUB);
+
+        ArgumentCaptor<OrdenMensaje> mensajeCaptor = ArgumentCaptor.forClass(OrdenMensaje.class);
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitConfig.ROUTING_KEY_ORDEN_CANCELADA), mensajeCaptor.capture());
+        OrdenMensaje mensaje = mensajeCaptor.getValue();
+        assertEquals(orden.getId().toString(), mensaje.ordenId());
+        assertEquals("ORDEN_CANCELADA", mensaje.evento());
+        assertEquals("CANCELADA", mensaje.estado());
+    }
+
+    @Test
+    void cambiarEstado_estadosSinEvento_noPublicanEnRabbit() {
+        Orden orden = orden(EstadoOrden.PAGADA);
+        orden.setId(UUID.randomUUID());
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.EN_PREPARACION);
+
+        verify(rabbitTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    @Test
+    void publicarEnRabbit_fallaDelBroker_noInterrumpeElFlujo() {
+        Orden orden = orden(EstadoOrden.PENDIENTE);
+        orden.setId(UUID.randomUUID());
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenItemRepository.findByOrdenId(orden.getId())).thenReturn(List.of());
+        org.mockito.Mockito.doThrow(new IllegalStateException("broker caido"))
+                .when(rabbitTemplate).convertAndSend(anyString(), any(Object.class));
+
+        Optional<Orden> resultado = ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.PAGADA);
+
+        assertTrue(resultado.isPresent());
+        assertEquals(EstadoOrden.PAGADA, orden.getEstado());
     }
 
     private Orden orden(EstadoOrden estado) {

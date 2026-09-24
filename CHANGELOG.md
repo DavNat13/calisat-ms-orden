@@ -1,5 +1,17 @@
 # Changelog - calisat-ms-orden
 
+## [2.2.0] - 2026-09-24
+
+### Changed
+- `OrdenService` ahora exige en su constructor el `RabbitTemplate` (productor RabbitMQ); cualquier construcción manual del servicio debe inyectarlo
+
+### Added
+- Productor RabbitMQ: dependencia `spring-boot-starter-amqp`, exchange `calisat.exchange` y `RabbitTemplate` con `Jackson2JsonMessageConverter`
+- Publicación de `orden.confirmada` (al pasar a PAGADA) y `orden.cancelada` (al cancelar, vía endpoint o transición de estado) con payload JSON `OrdenMensaje` (ordenId, usuarioSub, evento, estado, total); operación best-effort que jamás interrumpe el flujo de la orden
+- Configuración RabbitMQ (localhost:5672, guest/guest) en `application.yaml`
+- Versión pom.xml actualizada a 2.2.0
+- Tests de publicación en RabbitMQ: confirmada, cancelada por transición y por cancelación, estados sin evento y caída del broker
+
 ## [2.1.0] - 2026-09-24
 
 ### Added
@@ -39,6 +51,7 @@
 - Tests de servicio (OrdenServiceTest)
 - Health check via Spring Actuator
 
+[2.2.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/DavNat13/calisat-ms-orden/releases/tag/v1.3.0

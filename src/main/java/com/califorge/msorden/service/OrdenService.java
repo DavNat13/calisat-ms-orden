@@ -6,8 +6,10 @@ import com.califorge.msorden.client.EnviosClient;
 import com.califorge.msorden.client.InventarioClient;
 import com.califorge.msorden.client.NotificacionEventoDto;
 import com.califorge.msorden.client.NotificacionesClient;
+import com.califorge.msorden.config.RabbitConfig;
 import com.califorge.msorden.dto.OrdenCreateRequest;
 import com.califorge.msorden.dto.OrdenItemRequest;
+import com.califorge.msorden.dto.OrdenMensaje;
 import com.califorge.msorden.exception.EstadoInvalidoException;
 import com.califorge.msorden.exception.OrdenItemsVaciosException;
 import com.califorge.msorden.exception.TransicionNoPermitidaException;
@@ -20,6 +22,7 @@ import com.califorge.msorden.repository.OrdenItemRepository;
 import com.califorge.msorden.repository.OrdenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -70,6 +73,7 @@ public class OrdenService {
     private final InventarioClient inventarioClient;
     private final EnviosClient enviosClient;
     private final NotificacionesClient notificacionesClient;
+    private final RabbitTemplate rabbitTemplate;
 
     public OrdenService(OrdenRepository ordenRepository,
                         OrdenItemRepository ordenItemRepository,
@@ -77,7 +81,8 @@ public class OrdenService {
                         CarritoClient carritoClient,
                         InventarioClient inventarioClient,
                         EnviosClient enviosClient,
-                        NotificacionesClient notificacionesClient) {
+                        NotificacionesClient notificacionesClient,
+                        RabbitTemplate rabbitTemplate) {
         this.ordenRepository = ordenRepository;
         this.ordenItemRepository = ordenItemRepository;
         this.ordenEventoRepository = ordenEventoRepository;
@@ -85,6 +90,7 @@ public class OrdenService {
         this.inventarioClient = inventarioClient;
         this.enviosClient = enviosClient;
         this.notificacionesClient = notificacionesClient;
+        this.rabbitTemplate = rabbitTemplate;
     }
 
     /**
@@ -286,8 +292,9 @@ public class OrdenService {
 
     /**
      * Integraciones de cambio de estado (fase B), best-effort:
-     * al PAGAR confirma las reservas de stock; al PREPARAR/ENVIAR crea el
-     * envio en calisat-ms-envios con el snapshot de direccion de la orden.
+     * al PAGAR confirma las reservas de stock y publica orden.confirmada en
+     * RabbitMQ; al CANCELAR publica orden.cancelada; al PREPARAR/ENVIAR crea
+     * el envio en calisat-ms-envios con el snapshot de direccion de la orden.
      */
     private void integrarTrasCambioEstado(Orden orden, EstadoOrden nuevoEstado) {
         try {
@@ -295,6 +302,12 @@ public class OrdenService {
                 for (OrdenItem item : ordenItemRepository.findByOrdenId(orden.getId())) {
                     inventarioClient.confirmar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
                 }
+                publicarEnRabbit(RabbitConfig.ROUTING_KEY_ORDEN_CONFIRMADA,
+                        mensajeDe(orden, "ORDEN_CONFIRMADA"));
+            }
+            if (nuevoEstado == EstadoOrden.CANCELADA) {
+                publicarEnRabbit(RabbitConfig.ROUTING_KEY_ORDEN_CANCELADA,
+                        mensajeDe(orden, "ORDEN_CANCELADA"));
             }
             if (nuevoEstado == EstadoOrden.EN_PREPARACION || nuevoEstado == EstadoOrden.ENVIADA) {
                 enviosClient.crear(new EnvioSolicitudDto(
@@ -314,7 +327,8 @@ public class OrdenService {
 
     /**
      * Integraciones de cancelacion (fase B), best-effort: libera las
-     * reservas de stock en inventario y publica ORDEN_CANCELADA.
+     * reservas de stock en inventario y publica ORDEN_CANCELADA (HTTP) y
+     * orden.cancelada en RabbitMQ.
      */
     private void integrarTrasCancelacion(Orden orden) {
         try {
@@ -326,10 +340,35 @@ public class OrdenService {
                     eventoOrden("Orden cancelada",
                             "Tu orden " + orden.getId() + " fue cancelada.",
                             orden));
+            publicarEnRabbit(RabbitConfig.ROUTING_KEY_ORDEN_CANCELADA,
+                    mensajeDe(orden, "ORDEN_CANCELADA"));
         } catch (RuntimeException ex) {
             log.error("Integraciones de cancelacion fallaron (flujo principal continuado): {}",
                     ex.getMessage());
         }
+    }
+
+    /**
+     * Publica un evento de orden en calisat.exchange (mejor esfuerzo):
+     * cualquier fallo del broker se registra y NO interrumpe el flujo.
+     */
+    private void publicarEnRabbit(String routingKey, OrdenMensaje mensaje) {
+        try {
+            rabbitTemplate.convertAndSend(routingKey, mensaje);
+        } catch (RuntimeException ex) {
+            log.error("No se pudo publicar '{}' en RabbitMQ (flujo principal continuado): {}",
+                    routingKey, ex.getMessage());
+        }
+    }
+
+    /** Construye el mensaje JSON de orden hacia calisat-ms-notificaciones. */
+    private OrdenMensaje mensajeDe(Orden orden, String evento) {
+        return new OrdenMensaje(
+                String.valueOf(orden.getId()),
+                orden.getUsuarioSub(),
+                evento,
+                orden.getEstado() != null ? orden.getEstado().name() : null,
+                orden.getTotal() != null ? orden.getTotal().toPlainString() : null);
     }
 
     /** Construye el payload de evento hacia calisat-ms-notificaciones. */
