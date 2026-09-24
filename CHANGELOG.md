@@ -1,5 +1,12 @@
 # Changelog - calisat-ms-orden
 
+## [2.1.0] - 2026-09-24
+
+### Added
+- RBAC con Azure Entra ID: bean `JwtAuthenticationConverter` que extrae el claim `roles` del JWT con prefijo `ROLE_` (normalizado a mayúsculas)
+- Endpoints de `/api/v1/ordenes` restringidos a `CLIENTE` (recurso propio); Swagger y `/actuator/health` permanecen públicos
+- Versión pom.xml actualizada a 2.1.0
+
 ## [2.0.0] - 2026-09-23
 
 ### BREAKING CHANGE
@@ -32,5 +39,6 @@
 - Tests de servicio (OrdenServiceTest)
 - Health check via Spring Actuator
 
+[2.1.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/DavNat13/calisat-ms-orden/releases/tag/v1.3.0
