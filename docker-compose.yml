@@ -1,0 +1,43 @@
+services:
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: calisat-db-orden
+    environment:
+      POSTGRES_DB: calisat_orden
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    volumes:
+      - calisat_orden_data:/var/lib/postgresql/data
+    networks:
+      - calisat-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d calisat_orden"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: calisat-ms-orden
+    ports:
+      - "8085:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/calisat_orden
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - calisat-net
+
+networks:
+  calisat-net:
+    driver: bridge
+
+volumes:
+  calisat_orden_data:
