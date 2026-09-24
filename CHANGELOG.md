@@ -31,3 +31,6 @@
 - GlobalExceptionHandler con manejo de errores de negocio y validacion
 - Tests de servicio (OrdenServiceTest)
 - Health check via Spring Actuator
+
+[2.0.0]: https://github.com/DavNat13/calisat-ms-orden/compare/v1.3.0...v2.0.0
+[1.3.0]: https://github.com/DavNat13/calisat-ms-orden/releases/tag/v1.3.0
