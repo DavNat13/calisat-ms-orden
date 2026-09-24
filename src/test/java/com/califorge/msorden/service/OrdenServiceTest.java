@@ -1,5 +1,10 @@
 package com.califorge.msorden.service;
 
+import com.califorge.msorden.client.CarritoClient;
+import com.califorge.msorden.client.EnviosClient;
+import com.califorge.msorden.client.InventarioClient;
+import com.califorge.msorden.client.NotificacionEventoDto;
+import com.califorge.msorden.client.NotificacionesClient;
 import com.califorge.msorden.dto.OrdenCreateRequest;
 import com.califorge.msorden.dto.OrdenItemRequest;
 import com.califorge.msorden.exception.TransicionNoPermitidaException;
@@ -30,6 +35,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,6 +54,18 @@ class OrdenServiceTest {
 
     @Mock
     private OrdenEventoRepository ordenEventoRepository;
+
+    @Mock
+    private CarritoClient carritoClient;
+
+    @Mock
+    private InventarioClient inventarioClient;
+
+    @Mock
+    private EnviosClient enviosClient;
+
+    @Mock
+    private NotificacionesClient notificacionesClient;
 
     @InjectMocks
     private OrdenService ordenService;
@@ -233,6 +253,89 @@ class OrdenServiceTest {
 
         assertEquals(1, items.size());
         assertEquals("SKU-1", items.get(0).getSku());
+    }
+
+    @Test
+    void crear_reservaStockPublicaEventoYVaciaElCarrito() {
+        UUID idOrden = UUID.randomUUID();
+        when(ordenRepository.findByIdempotencyKey("clave-1")).thenReturn(Optional.empty());
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> {
+            Orden orden = inv.getArgument(0);
+            orden.setId(idOrden);
+            return orden;
+        });
+        when(ordenItemRepository.save(any(OrdenItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        OrdenCreateRequest request = new OrdenCreateRequest(
+                List.of(
+                        new OrdenItemRequest("SKU-1", "Anillas", 2, new BigDecimal("10.00")),
+                        new OrdenItemRequest("SKU-2", "Cuerda", 1, new BigDecimal("5.50"))),
+                "Calle Mayor 1", "Madrid", "Espana", "28001",
+                "clave-1");
+
+        ordenService.crear(SUB, request, null);
+
+        verify(inventarioClient).reservar("SKU-1", 2, idOrden.toString());
+        verify(inventarioClient).reservar("SKU-2", 1, idOrden.toString());
+        verify(notificacionesClient).publicar(eq("orden-" + idOrden + "-confirmada"), any(NotificacionEventoDto.class));
+        verify(carritoClient).vaciar(SUB);
+        verify(enviosClient, never()).crear(any());
+    }
+
+    @Test
+    void cancelar_liberaReservasYPublicaEventoDeCancelacion() {
+        Orden orden = orden(EstadoOrden.EN_PREPARACION);
+        orden.setId(UUID.randomUUID());
+        OrdenItem item = new OrdenItem();
+        item.setOrden(orden);
+        item.setSku("SKU-1");
+        item.setCantidad(3);
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenItemRepository.findByOrdenId(orden.getId())).thenReturn(List.of(item));
+
+        ordenService.cancelar(orden.getId(), SUB);
+
+        verify(inventarioClient).liberar("SKU-1", 3, orden.getId().toString());
+        verify(notificacionesClient).publicar(
+                eq("orden-" + orden.getId() + "-cancelada"), any(NotificacionEventoDto.class));
+    }
+
+    @Test
+    void cambiarEstado_aPagada_confirmaLasReservasDeStock() {
+        Orden orden = orden(EstadoOrden.PENDIENTE);
+        orden.setId(UUID.randomUUID());
+        OrdenItem item = new OrdenItem();
+        item.setOrden(orden);
+        item.setSku("SKU-1");
+        item.setCantidad(2);
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenItemRepository.findByOrdenId(orden.getId())).thenReturn(List.of(item));
+
+        ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.PAGADA);
+
+        verify(inventarioClient).confirmar("SKU-1", 2, orden.getId().toString());
+    }
+
+    @Test
+    void cambiarEstado_aEnPreparacion_creaElEnvioConSnapshotDeDireccion() {
+        Orden orden = orden(EstadoOrden.PAGADA);
+        orden.setId(UUID.randomUUID());
+        orden.setDireccionCalle("Calle Mayor 1");
+        orden.setDireccionCiudad("Madrid");
+        orden.setDireccionPais("Espana");
+        orden.setDireccionCodigoPostal("28001");
+        when(ordenRepository.findByIdAndUsuarioSub(orden.getId(), SUB)).thenReturn(Optional.of(orden));
+        when(ordenRepository.save(any(Orden.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(ordenEventoRepository.save(any(OrdenEvento.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ordenService.cambiarEstado(orden.getId(), SUB, EstadoOrden.EN_PREPARACION);
+
+        verify(enviosClient).crear(any());
     }
 
     private Orden orden(EstadoOrden estado) {

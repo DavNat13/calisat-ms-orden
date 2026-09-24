@@ -1,5 +1,11 @@
 package com.califorge.msorden.service;
 
+import com.califorge.msorden.client.CarritoClient;
+import com.califorge.msorden.client.EnvioSolicitudDto;
+import com.califorge.msorden.client.EnviosClient;
+import com.califorge.msorden.client.InventarioClient;
+import com.califorge.msorden.client.NotificacionEventoDto;
+import com.califorge.msorden.client.NotificacionesClient;
 import com.califorge.msorden.dto.OrdenCreateRequest;
 import com.califorge.msorden.dto.OrdenItemRequest;
 import com.califorge.msorden.exception.EstadoInvalidoException;
@@ -12,6 +18,8 @@ import com.califorge.msorden.model.OrdenItem;
 import com.califorge.msorden.repository.OrdenEventoRepository;
 import com.califorge.msorden.repository.OrdenItemRepository;
 import com.califorge.msorden.repository.OrdenRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -32,10 +40,18 @@ import java.util.UUID;
  * propia (aislada por usuarioSub), maquina de estados y cancelacion.
  * Todas las operaciones de lectura de una orden filtran por el sub del
  * JWT para no filtrar datos entre usuarios (fase actual sin RBAC).
+ *
+ * <p>Fase B (integraciones, todas best-effort con try/catch): reserva de
+ * stock en inventario al crear, confirmacion al pagar, liberacion al
+ * cancelar, vaciado del carrito tras el checkout, creacion de envio al
+ * preparar/enviar y eventos a notificaciones (ORDEN_CONFIRMADA /
+ * ORDEN_CANCELADA). Ninguna falla interrumpe el flujo principal.</p>
  */
 @Service
 @Transactional
 public class OrdenService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrdenService.class);
 
     /** Mapa de transiciones permitidas de la maquina de estados. */
     private static final Map<EstadoOrden, Set<EstadoOrden>> TRANSICIONES_PERMITIDAS = Map.of(
@@ -50,13 +66,25 @@ public class OrdenService {
     private final OrdenRepository ordenRepository;
     private final OrdenItemRepository ordenItemRepository;
     private final OrdenEventoRepository ordenEventoRepository;
+    private final CarritoClient carritoClient;
+    private final InventarioClient inventarioClient;
+    private final EnviosClient enviosClient;
+    private final NotificacionesClient notificacionesClient;
 
     public OrdenService(OrdenRepository ordenRepository,
                         OrdenItemRepository ordenItemRepository,
-                        OrdenEventoRepository ordenEventoRepository) {
+                        OrdenEventoRepository ordenEventoRepository,
+                        CarritoClient carritoClient,
+                        InventarioClient inventarioClient,
+                        EnviosClient enviosClient,
+                        NotificacionesClient notificacionesClient) {
         this.ordenRepository = ordenRepository;
         this.ordenItemRepository = ordenItemRepository;
         this.ordenEventoRepository = ordenEventoRepository;
+        this.carritoClient = carritoClient;
+        this.inventarioClient = inventarioClient;
+        this.enviosClient = enviosClient;
+        this.notificacionesClient = notificacionesClient;
     }
 
     /**
@@ -70,7 +98,7 @@ public class OrdenService {
      * request). Si la clave de idempotencia (header con prioridad o body)
      * ya existe, devuelve la orden previa sin crear otra.
      *
-     * @param azureSub sub del usuario autenticado (dueno de la orden)
+     * @param azureSub sub del usuario autenticado (dueño de la orden)
      * @param request items, direccion snapshot e idempotencyKey opcional del body
      * @param idempotencyKeyHeader valor del header Idempotency-Key (opcional)
      * @return la orden creada (reutilizada=false) o la existente (reutilizada=true)
@@ -124,6 +152,8 @@ public class OrdenService {
         }
         ordenEventoRepository.save(new OrdenEvento(orden, null, EstadoOrden.PENDIENTE, azureSub));
 
+        integrarTrasCreacion(orden, items, azureSub);
+
         return new Creacion(orden, false);
     }
 
@@ -141,7 +171,7 @@ public class OrdenService {
     }
 
     /**
-     * Busca una orden por id filtrando por el dueno (usuarioSub del JWT);
+     * Busca una orden por id filtrando por el dueño (usuarioSub del JWT);
      * si no pertenece al sub, devuelve vacio (404, sin fuga de datos).
      *
      * @param id identificador de la orden
@@ -171,7 +201,7 @@ public class OrdenService {
      * registra fechaConfirmacion. Crea un {@link OrdenEvento} por transicion.
      *
      * @param id identificador de la orden
-     * @param azureSub sub del usuario autenticado (dueno y actor del evento)
+     * @param azureSub sub del usuario autenticado (dueño y actor del evento)
      * @param nuevoEstado estado destino
      * @return la orden actualizada, o vacio si no existe/no pertenece al sub
      */
@@ -197,6 +227,7 @@ public class OrdenService {
         }
         ordenRepository.save(orden);
         ordenEventoRepository.save(new OrdenEvento(orden, actual, nuevoEstado, azureSub));
+        integrarTrasCambioEstado(orden, nuevoEstado);
         return Optional.of(orden);
     }
 
@@ -208,7 +239,7 @@ public class OrdenService {
      * (ENTREGADA, CANCELADA o FALLO_PAGO).
      *
      * @param id identificador de la orden
-     * @param azureSub sub del usuario autenticado (dueno)
+     * @param azureSub sub del usuario autenticado (dueño)
      * @return la orden cancelada, o vacio si no existe/no pertenece al sub
      */
     public Optional<Orden> cancelar(UUID id, String azureSub) {
@@ -226,6 +257,98 @@ public class OrdenService {
         orden.setEstado(EstadoOrden.CANCELADA);
         ordenRepository.save(orden);
         ordenEventoRepository.save(new OrdenEvento(orden, actual, EstadoOrden.CANCELADA, azureSub));
+        integrarTrasCancelacion(orden);
         return Optional.of(orden);
+    }
+
+    /**
+     * Integraciones de creacion (fase B), todas best-effort:
+     * reserva de stock por item, evento ORDEN_CONFIRMADA a notificaciones
+     * (con Idempotency-Key) y vaciado del carrito tras el checkout.
+     * Cualquier fallo se registra y NO interrumpe la creacion de la orden.
+     */
+    private void integrarTrasCreacion(Orden orden, List<OrdenItem> items, String azureSub) {
+        try {
+            for (OrdenItem item : items) {
+                inventarioClient.reservar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+            }
+            notificacionesClient.publicar(
+                    "orden-" + orden.getId() + "-confirmada",
+                    eventoOrden("Orden confirmada",
+                            "Tu orden " + orden.getId() + " fue confirmada con total " + orden.getTotal() + ".",
+                            orden));
+            carritoClient.vaciar(azureSub);
+        } catch (RuntimeException ex) {
+            log.error("Integraciones tras crear la orden fallaron (flujo principal continuado): {}",
+                    ex.getMessage());
+        }
+    }
+
+    /**
+     * Integraciones de cambio de estado (fase B), best-effort:
+     * al PAGAR confirma las reservas de stock; al PREPARAR/ENVIAR crea el
+     * envio en calisat-ms-envios con el snapshot de direccion de la orden.
+     */
+    private void integrarTrasCambioEstado(Orden orden, EstadoOrden nuevoEstado) {
+        try {
+            if (nuevoEstado == EstadoOrden.PAGADA) {
+                for (OrdenItem item : ordenItemRepository.findByOrdenId(orden.getId())) {
+                    inventarioClient.confirmar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+                }
+            }
+            if (nuevoEstado == EstadoOrden.EN_PREPARACION || nuevoEstado == EstadoOrden.ENVIADA) {
+                enviosClient.crear(new EnvioSolicitudDto(
+                        orden.getId(),
+                        orden.getUsuarioSub(),
+                        orden.getDireccionCalle(),
+                        orden.getDireccionCiudad(),
+                        orden.getDireccionPais(),
+                        orden.getDireccionCodigoPostal(),
+                        null));
+            }
+        } catch (RuntimeException ex) {
+            log.error("Integraciones de cambio de estado fallaron (flujo principal continuado): {}",
+                    ex.getMessage());
+        }
+    }
+
+    /**
+     * Integraciones de cancelacion (fase B), best-effort: libera las
+     * reservas de stock en inventario y publica ORDEN_CANCELADA.
+     */
+    private void integrarTrasCancelacion(Orden orden) {
+        try {
+            for (OrdenItem item : ordenItemRepository.findByOrdenId(orden.getId())) {
+                inventarioClient.liberar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+            }
+            notificacionesClient.publicar(
+                    "orden-" + orden.getId() + "-cancelada",
+                    eventoOrden("Orden cancelada",
+                            "Tu orden " + orden.getId() + " fue cancelada.",
+                            orden));
+        } catch (RuntimeException ex) {
+            log.error("Integraciones de cancelacion fallaron (flujo principal continuado): {}",
+                    ex.getMessage());
+        }
+    }
+
+    /** Construye el payload de evento hacia calisat-ms-notificaciones. */
+    private NotificacionEventoDto eventoOrden(String asunto, String cuerpoTexto, Orden orden) {
+        String payload = "{\"ordenId\":\"" + orden.getId()
+                + "\",\"estado\":\"" + orden.getEstado()
+                + "\",\"total\":\"" + orden.getTotal() + "\"}";
+        return new NotificacionEventoDto(
+                "EMAIL",
+                "SISTEMA",
+                asunto,
+                cuerpoTexto,
+                null,
+                orden.getUsuarioSub(),
+                null,
+                null,
+                null,
+                payload,
+                "calisat-ms-orden",
+                "orden-" + orden.getId());
     }
 }
