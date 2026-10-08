@@ -1,0 +1,10 @@
+# Perfil local (docker compose): los microservicios se resuelven por
+# nombre de servicio dentro de la red compartida calisat-net.
+# CERO IPs de maquina: en despliegue no se activa este perfil y
+# manda calisat.gateway.url del application.yaml principal.
+calisat:
+  urls:
+    carrito: http://calisat-ms-carrito:8080
+    inventario: http://calisat-ms-inventario:8080
+    envios: http://calisat-ms-envios:8080
+    notificaciones: http://calisat-ms-notificaciones:8080

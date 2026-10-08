@@ -12,8 +12,7 @@ import java.util.Map;
 
 /**
  * Cliente HTTP de calisat-ms-inventario (fase B): reserva, libera y confirma
- * stock. Sin service discovery: base URL = CALISAT_INVENTARIO_URL
- * (default http://localhost:8083).
+ * stock. Sin service discovery: base URL = calisat.gateway.url (el API Gateway: cero IPs en el repo).
  *
  * <p>Resiliencia: cada operacion es best-effort (try/catch + log). Si el
  * inventario esta caido, el flujo principal de la orden NO se interrumpe
@@ -28,7 +27,7 @@ public class InventarioClient {
     private final String baseUrl;
 
     public InventarioClient(RestTemplate restTemplate,
-                            @Value("${CALISAT_INVENTARIO_URL:http://localhost:8083}") String baseUrl) {
+                            @Value("${calisat.urls.inventario:${calisat.gateway.url}}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

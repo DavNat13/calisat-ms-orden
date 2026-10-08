@@ -23,8 +23,11 @@ public record OrdenResponse(
         @Schema(description = "Suma de los subtotales de los items.", example = "45.50")
         BigDecimal subtotal,
 
-        @Schema(description = "Total a pagar (en esta fase, igual al subtotal).", example = "45.50")
+        @Schema(description = "Total a pagar: subtotal + costo de envio.", example = "49.49")
         BigDecimal total,
+
+        @Schema(description = "Costo de envio incluido en el total (CLP).", example = "3990")
+        BigDecimal costoEnvio,
 
         @Schema(description = "Lineas de la orden (snapshot de precios).")
         List<OrdenItemResponse> items,
@@ -54,6 +57,7 @@ public record OrdenResponse(
                 orden.getEstado(),
                 orden.getSubtotal(),
                 orden.getTotal(),
+                orden.getCostoEnvio(),
                 lineas,
                 orden.getDireccionCalle(),
                 orden.getDireccionCiudad(),

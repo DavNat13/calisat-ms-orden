@@ -14,6 +14,9 @@ public interface OrdenRepository extends JpaRepository<Orden, UUID> {
 
     Page<Orden> findByUsuarioSubOrderByFechaCreacionDesc(String usuarioSub, Pageable pageable);
 
+    /** Listado global (solo lo consume el rol ADMINISTRADOR desde el panel). */
+    Page<Orden> findAllByOrderByFechaCreacionDesc(Pageable pageable);
+
     Optional<Orden> findByIdAndUsuarioSub(UUID id, String usuarioSub);
 
     Optional<Orden> findByIdempotencyKey(String idempotencyKey);

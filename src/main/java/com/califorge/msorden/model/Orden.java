@@ -43,6 +43,9 @@ public class Orden {
     @Column(name = "total", precision = 12, scale = 2)
     private BigDecimal total;
 
+    @Column(name = "costo_envio", precision = 12, scale = 2)
+    private BigDecimal costoEnvio;
+
     @Column(name = "idempotency_key", unique = true, nullable = true, length = 100)
     private String idempotencyKey;
 
@@ -99,6 +102,9 @@ public class Orden {
 
     public BigDecimal getTotal() { return total; }
     public void setTotal(BigDecimal total) { this.total = total; }
+
+    public BigDecimal getCostoEnvio() { return costoEnvio; }
+    public void setCostoEnvio(BigDecimal costoEnvio) { this.costoEnvio = costoEnvio; }
 
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }

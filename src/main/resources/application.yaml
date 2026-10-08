@@ -41,3 +41,14 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+
+
+# ---------------------------------------------------------------------------
+# Integracion MS->MS (fase de conexion): el API Gateway es el UNICO punto de
+# direccionamiento; en el repo no aparece ninguna IP de maquina.
+# ---------------------------------------------------------------------------
+calisat:
+  gateway:
+    url: https://ho5p58iyu7.execute-api.us-east-1.amazonaws.com
+  servicio:
+    token: calisat-svc-7f3a9c21

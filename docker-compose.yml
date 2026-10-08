@@ -19,6 +19,9 @@ services:
       retries: 5
 
   app:
+    # Perfil local: activa application-local.yaml (URLs por nombre de servicio).
+    command: ["java","-XX:+UseContainerSupport","-XX:MaxRAMPercentage=75.0",
+              "-jar","app.jar","--spring.profiles.active=local"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -26,6 +29,7 @@ services:
     ports:
       - "8085:8080"
     environment:
+      SERVER_PORT: "8080"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/calisat_orden
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgres
@@ -37,6 +41,9 @@ services:
 
 networks:
   calisat-net:
+    # Nombre fijo: los 7 compose comparten esta misma red para que los
+    # microservicios se vean entre si en local (sin IPs, por nombre de servicio).
+    name: calisat-net
     driver: bridge
 
 volumes:

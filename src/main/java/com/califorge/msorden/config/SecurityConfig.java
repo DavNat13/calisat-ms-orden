@@ -87,7 +87,11 @@ public class SecurityConfig {
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                .requestMatchers("/api/v1/ordenes", "/api/v1/ordenes/**").hasAnyRole("CLIENTE")
+                // El cliente opera SOLO las suyas (el filtrado por dueño esta en
+                // OrdenService). El panel de administracion (listado global,
+                // detalle y transiciones de cualquier orden) usa ADMINISTRADOR.
+                .requestMatchers("/api/v1/ordenes", "/api/v1/ordenes/**")
+                        .hasAnyRole("CLIENTE", "ADMINISTRADOR")
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2

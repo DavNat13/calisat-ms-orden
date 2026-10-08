@@ -13,8 +13,11 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
@@ -31,13 +35,45 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/ordenes")
-@Tag(name = "Ordenes de compra", description = "Gestion de ordenes del usuario autenticado (JWT). Sin RBAC: todo usuario autenticado accede solo a sus propias ordenes.")
+@Tag(name = "Ordenes de compra", description = "Ordenes del usuario autenticado (JWT con rol CLIENTE): cada quien ve las suyas. El rol ADMINISTRADOR puede listar y operar sobre todas desde el panel.")
 public class OrdenController {
 
     private final OrdenService ordenService;
 
     public OrdenController(OrdenService ordenService) {
         this.ordenService = ordenService;
+    }
+
+    /**
+     * true si el JWT en curso trae el rol ADMINISTRADOR. Se usa para abrir
+     * el listado global y las operaciones sobre ordenes ajenas; la entrada
+     * a esas rutas la vigila SecurityConfig.
+     */
+    private static boolean esAdministrador() {
+        Authentication autenticacion = SecurityContextHolder.getContext().getAuthentication();
+        return autenticacion != null && autenticacion.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMINISTRADOR".equals(authority.getAuthority()));
+    }
+
+    /**
+     * Listado global de ordenes para el panel de administracion.
+     * 403 si el JWT no trae el rol ADMINISTRADOR.
+     *
+     * @param pageable paginacion (tamanio por defecto 20)
+     * @return 200 con la pagina de TODAS las ordenes
+     */
+    @Operation(summary = "Listar todas las ordenes (admin)",
+            description = "Listado global paginado (mas reciente primero) para el panel de administracion. 403 si el JWT no trae el rol ADMINISTRADOR.")
+    @GetMapping("/todas")
+    public ResponseEntity<Page<OrdenResponse>> listarTodas(
+            @PageableDefault(size = 20) Pageable pageable) {
+        if (!esAdministrador()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Requiere el rol ADMINISTRADOR.");
+        }
+        Page<OrdenResponse> ordenes = ordenService.listarTodas(pageable)
+                .map(orden -> OrdenResponse.desde(orden, ordenService.itemsDe(orden.getId())));
+        return ResponseEntity.ok(ordenes);
     }
 
     /**
@@ -106,7 +142,7 @@ public class OrdenController {
             @Parameter(name = "id", description = "Identificador (UUID) de la orden.", required = true)
             @PathVariable UUID id,
             @AuthenticationPrincipal Jwt jwt) {
-        return ordenService.buscarPorId(id, jwt.getSubject())
+        return ordenService.buscarPorId(id, jwt.getSubject(), esAdministrador())
                 .map(orden -> OrdenResponse.desde(orden, ordenService.itemsDe(orden.getId())))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -130,7 +166,7 @@ public class OrdenController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody OrdenEstadoRequest request) {
         EstadoOrden nuevoEstado = EstadoOrden.desdeTexto(request.estado());
-        return ordenService.cambiarEstado(id, jwt.getSubject(), nuevoEstado)
+        return ordenService.cambiarEstado(id, jwt.getSubject(), nuevoEstado, esAdministrador())
                 .map(orden -> OrdenResponse.desde(orden, ordenService.itemsDe(orden.getId())))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -150,7 +186,7 @@ public class OrdenController {
             @Parameter(name = "id", description = "Identificador (UUID) de la orden.", required = true)
             @PathVariable UUID id,
             @AuthenticationPrincipal Jwt jwt) {
-        return ordenService.cancelar(id, jwt.getSubject())
+        return ordenService.cancelar(id, jwt.getSubject(), esAdministrador())
                 .map(orden -> OrdenResponse.desde(orden, ordenService.itemsDe(orden.getId())))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());

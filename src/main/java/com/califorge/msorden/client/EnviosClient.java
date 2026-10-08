@@ -11,8 +11,7 @@ import java.util.Optional;
 
 /**
  * Cliente HTTP de calisat-ms-envios (fase B): crea el envio al preparar/
- * enviar la orden. Sin service discovery: base URL = CALISAT_ENVIOS_URL
- * (default http://localhost:8086).
+ * enviar la orden. Sin service discovery: base URL = calisat.gateway.url (el API Gateway: cero IPs en el repo).
  *
  * <p>Resiliencia: si envios esta caido (o la orden ya tiene envio -> 409),
  * la operacion degrada a Optional vacio y la transicion de estado de la
@@ -27,7 +26,7 @@ public class EnviosClient {
     private final String baseUrl;
 
     public EnviosClient(RestTemplate restTemplate,
-                        @Value("${CALISAT_ENVIOS_URL:http://localhost:8086}") String baseUrl) {
+                        @Value("${calisat.urls.envios:${calisat.gateway.url}}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

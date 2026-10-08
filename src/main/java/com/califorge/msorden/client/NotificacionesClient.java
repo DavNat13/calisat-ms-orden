@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * Cliente HTTP de calisat-ms-notificaciones (fase B): publica eventos
  * (ORDEN_CONFIRMADA, ORDEN_CANCELADA) con cabecera Idempotency-Key para
  * que la ingesta del receptor sea idempotente. Sin service discovery:
- * base URL = CALISAT_NOTIFICACIONES_URL (default http://localhost:8087).
+ * base URL = calisat.gateway.url (el API Gateway: cero IPs en el repo).
  *
  * <p>Resiliencia (patron del diseno): try/catch que NUNCA rompe la
  * transaccion principal; si notificaciones esta caido, la orden sigue
@@ -30,7 +30,7 @@ public class NotificacionesClient {
     private final String baseUrl;
 
     public NotificacionesClient(RestTemplate restTemplate,
-                                @Value("${CALISAT_NOTIFICACIONES_URL:http://localhost:8087}") String baseUrl) {
+                                @Value("${calisat.urls.notificaciones:${calisat.gateway.url}}") String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl;
     }

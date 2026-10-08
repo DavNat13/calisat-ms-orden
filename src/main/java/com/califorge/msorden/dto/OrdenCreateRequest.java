@@ -2,9 +2,11 @@ package com.califorge.msorden.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 public record OrdenCreateRequest(
@@ -31,5 +33,17 @@ public record OrdenCreateRequest(
 
         @Schema(description = "Clave de idempotencia opcional en el body. Si tambien llega el header Idempotency-Key, este tiene prioridad.", example = "orden-2026-001", maxLength = 100)
         @Size(max = 100, message = "idempotencyKey no puede superar 100 caracteres")
-        String idempotencyKey) {
+        String idempotencyKey,
+
+        @Schema(description = "Costo de envio calculado en el checkout (CLP). Se suma al total; 0 si se omite.", example = "3990")
+        @DecimalMin(value = "0", message = "costoEnvio no puede ser negativo")
+        BigDecimal costoEnvio) {
+
+    /** Compatibilidad: alta sin costo de envio (se asume 0). */
+    public OrdenCreateRequest(List<OrdenItemRequest> items, String direccionCalle,
+            String direccionCiudad, String direccionPais, String direccionCodigoPostal,
+            String idempotencyKey) {
+        this(items, direccionCalle, direccionCiudad, direccionPais,
+                direccionCodigoPostal, idempotencyKey, BigDecimal.ZERO);
+    }
 }

@@ -150,7 +150,11 @@ public class OrdenService {
             items.add(entidad);
         }
         orden.setSubtotal(subtotal);
-        orden.setTotal(subtotal);
+        BigDecimal costoEnvio = request.costoEnvio() == null
+                ? BigDecimal.ZERO
+                : request.costoEnvio();
+        orden.setCostoEnvio(costoEnvio);
+        orden.setTotal(subtotal.add(costoEnvio));
 
         ordenRepository.save(orden);
         for (OrdenItem item : items) {
@@ -177,16 +181,49 @@ public class OrdenService {
     }
 
     /**
-     * Busca una orden por id filtrando por el dueño (usuarioSub del JWT);
-     * si no pertenece al sub, devuelve vacio (404, sin fuga de datos).
+     * Listado global de TODAS las ordenes, paginado y de mas reciente a mas
+     * antigua. Solo lo invoca el controlador cuando el JWT trae el rol
+     * ADMINISTRADOR (la seguridad vive en SecurityConfig).
+     *
+     * @param pageable paginacion solicitada
+     * @return pagina con todas las ordenes del sistema
+     */
+    @Transactional(readOnly = true)
+    public Page<Orden> listarTodas(Pageable pageable) {
+        return ordenRepository.findAllByOrderByFechaCreacionDesc(pageable);
+    }
+
+    /**
+     * Busca una orden por id. Con {@code esAdmin} se salta el filtro de
+     * dueño (el panel de administracion necesita ver ordenes ajenas); sin
+     * el, solo devuelve la orden si pertenece al sub (404 en otro caso).
      *
      * @param id identificador de la orden
      * @param azureSub sub del usuario autenticado
-     * @return la orden si existe y es del usuario
+     * @param esAdmin true si el caller trae el rol ADMINISTRADOR
+     * @return la orden si existe (y es del usuario, salvo que sea admin)
      */
     @Transactional(readOnly = true)
+    public Optional<Orden> buscarPorId(UUID id, String azureSub, boolean esAdmin) {
+        return esAdmin
+                ? ordenRepository.findById(id)
+                : ordenRepository.findByIdAndUsuarioSub(id, azureSub);
+    }
+
+    /** Sin privilegios de administrador: solo la orden del propio usuario. */
+    @Transactional(readOnly = true)
     public Optional<Orden> buscarPorId(UUID id, String azureSub) {
-        return ordenRepository.findByIdAndUsuarioSub(id, azureSub);
+        return buscarPorId(id, azureSub, false);
+    }
+
+    /**
+     * Localiza la orden sobre la que va a escribir un servicio: dueño o, si
+     * el caller es administrador, cualquier orden.
+     */
+    private Optional<Orden> buscarParaOperar(UUID id, String azureSub, boolean esAdmin) {
+        return esAdmin
+                ? ordenRepository.findById(id)
+                : ordenRepository.findByIdAndUsuarioSub(id, azureSub);
     }
 
     /**
@@ -212,10 +249,21 @@ public class OrdenService {
      * @return la orden actualizada, o vacio si no existe/no pertenece al sub
      */
     public Optional<Orden> cambiarEstado(UUID id, String azureSub, EstadoOrden nuevoEstado) {
+        return cambiarEstado(id, azureSub, nuevoEstado, false);
+    }
+
+    /**
+     * Variante con privilegios de administracion: el panel puede operar sobre
+     * cualquier orden, no solo sobre las suyas.
+     *
+     * @param esAdmin true si el caller trae el rol ADMINISTRADOR
+     */
+    public Optional<Orden> cambiarEstado(UUID id, String azureSub, EstadoOrden nuevoEstado,
+            boolean esAdmin) {
         if (nuevoEstado == null) {
             throw new EstadoInvalidoException("null");
         }
-        Optional<Orden> posible = ordenRepository.findByIdAndUsuarioSub(id, azureSub);
+        Optional<Orden> posible = buscarParaOperar(id, azureSub, esAdmin);
         if (posible.isEmpty()) {
             return Optional.empty();
         }
@@ -249,7 +297,16 @@ public class OrdenService {
      * @return la orden cancelada, o vacio si no existe/no pertenece al sub
      */
     public Optional<Orden> cancelar(UUID id, String azureSub) {
-        Optional<Orden> posible = ordenRepository.findByIdAndUsuarioSub(id, azureSub);
+        return cancelar(id, azureSub, false);
+    }
+
+    /**
+     * Variante con privilegios de administracion (ver {@link #cambiarEstado}).
+     *
+     * @param esAdmin true si el caller trae el rol ADMINISTRADOR
+     */
+    public Optional<Orden> cancelar(UUID id, String azureSub, boolean esAdmin) {
+        Optional<Orden> posible = buscarParaOperar(id, azureSub, esAdmin);
         if (posible.isEmpty()) {
             return Optional.empty();
         }
