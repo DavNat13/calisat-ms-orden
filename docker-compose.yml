@@ -38,6 +38,9 @@ services:
       SPRING_RABBITMQ_PORT: "5672"
       SPRING_RABBITMQ_USERNAME: calisat-app
       SPRING_RABBITMQ_PASSWORD: Calisat2026!
+      # Sin broker accesible el health de Rabbit marca DOWN; las publicaciones
+      # ya son best-effort (try/catch), asi que el contenedor no depende de el.
+      MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
     depends_on:
       postgres-db:
         condition: service_healthy

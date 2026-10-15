@@ -52,3 +52,34 @@ calisat:
     url: https://ho5p58iyu7.execute-api.us-east-1.amazonaws.com
   servicio:
     token: calisat-svc-7f3a9c21
+
+# El resource server valida tokens de DOS proveedores OIDC a la vez (Microsoft
+# Entra ID y AWS Cognito). Cada proveedor aporta su JWK Set (llaves publicas) y
+# los valores de "iss" y "aud" que se aceptan. MultiIssuerJwtDecoder elige el
+# decoder segun el "iss" del token y delega la validacion real (firma, audiencia,
+# fechas). La config de arriba (issuer-uri/audience) se conserva por compatibilidad.
+app:
+  security:
+    jwt:
+      providers:
+        # Microsoft Entra ID (Azure AD) - accesos desde la app web/SPA
+        - name: azure
+          jwk-set-uri: https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/discovery/v2.0/keys
+          issuers:
+            - https://login.microsoftonline.com/e5372bf0-c5e3-4286-887c-79069f209c1f/v2.0
+          # Azure usa el Application ID URI como "aud"; se admite con y sin prefijo api://
+          audiences:
+            - d221f0d2-1a7c-4872-ad6c-367a1f0717ec
+            - api://d221f0d2-1a7c-4872-ad6c-367a1f0717ec
+
+        # AWS Cognito - accesos desde clientes moviles/terceros
+        - name: cognito
+          jwk-set-uri: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UK0Q6EmAQ/.well-known/jwks.json
+          issuers:
+            - https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UK0Q6EmAQ
+          # App Client ID del user pool. En Cognito aparece en "aud" del ID token
+          # y en "client_id" del ACCESS token; el backend acepta cualquiera de los dos.
+          audiences:
+            - 79rbb9f5e2l5nmak9d17ueb2se
+          # Rol por defecto obligatorio para tokens de Cognito (ademas de cognito:groups).
+          default-role: CLIENTE
