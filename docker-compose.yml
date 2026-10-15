@@ -33,6 +33,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/calisat_orden
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgres
+      # Broker compartido: vive en la EC2 de calisat-ms-notificaciones (VPC).
+      SPRING_RABBITMQ_HOST: rabbitmq.calisat.internal
+      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_USERNAME: calisat-app
+      SPRING_RABBITMQ_PASSWORD: Calisat2026!
     depends_on:
       postgres-db:
         condition: service_healthy
