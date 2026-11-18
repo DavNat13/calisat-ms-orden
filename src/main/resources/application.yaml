@@ -25,10 +25,12 @@ spring:
           audience: d221f0d2-1a7c-4872-ad6c-367a1f0717ec
 
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: guest
-    password: guest
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:calisat-app}
+    password: ${SPRING_RABBITMQ_PASSWORD:Calisat2026!}
+    publisher-confirm-type: correlated
+    publisher-returns: true
 
 server:
   port: 8085
@@ -83,3 +85,4 @@ app:
             - 79rbb9f5e2l5nmak9d17ueb2se
           # Rol por defecto obligatorio para tokens de Cognito (ademas de cognito:groups).
           default-role: CLIENTE
+
