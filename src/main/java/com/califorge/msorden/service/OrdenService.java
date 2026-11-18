@@ -54,6 +54,10 @@ import java.util.UUID;
 @Transactional
 public class OrdenService {
 
+    /** Opcional: publica el evento "purchase" en Kafka (interacciones-user). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InteraccionPublisher interacciones;
+
     private static final Logger log = LoggerFactory.getLogger(OrdenService.class);
 
     /** Mapa de transiciones permitidas de la maquina de estados. */
@@ -368,6 +372,9 @@ public class OrdenService {
             if (nuevoEstado == EstadoOrden.PAGADA) {
                 for (OrdenItem item : ordenItemRepository.findByOrdenId(orden.getId())) {
                     inventarioClient.confirmar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+                    if (interacciones != null) {
+                        interacciones.publicar(orden.getUsuarioSub(), item.getSku(), InteraccionPublisher.PURCHASE, null);
+                    }
                 }
                 publicarEnRabbit(RabbitConfig.ROUTING_KEY_ORDEN_CONFIRMADA,
                         mensajeDe(orden, "ORDEN_CONFIRMADA"));
