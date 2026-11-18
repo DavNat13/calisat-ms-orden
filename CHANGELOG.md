@@ -1,5 +1,20 @@
 # Changelog - calisat-ms-orden
 
+## [3.0.0] - 2026-11-18
+
+### Changed
+- **BREAKING**: `calisat.exchange` se declara como `TopicExchange` (antes `DirectExchange`); los bindings previos deben recrearse
+- **BREAKING**: al crear una orden, si el inventario rechaza la reserva de algún ítem se liberan las reservas ya hechas y la API responde **409** (`StockInsuficienteException`) en lugar de continuar; evita sobreventa (OR-05)
+- El broker se configura por entorno (`SPRING_RABBITMQ_*`) con `publisher-confirm-type: correlated` y `publisher-returns: true`; `docker-compose.yml` usa el clúster de `calisat-infra`
+
+### Added
+- Dependencia `spring-kafka` y productor de interacciones (`KafkaProducerConfig`, `InteraccionPublisher`, `InteraccionEvent`) contra `interacciones-user`
+- Al pasar una orden a `PAGADA` se publica el evento `purchase` en Kafka (best-effort: si Kafka no está disponible la orden no falla)
+
+### Fixed
+- `AudienceValidator` acepta el claim `client_id` de los access tokens de Cognito además de `aud`
+- Versión pom.xml actualizada a 3.0.0
+
 ## [2.2.0] - 2026-09-24
 
 ### Changed
