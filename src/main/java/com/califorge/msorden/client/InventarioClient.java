@@ -54,6 +54,12 @@ public class InventarioClient {
             body.put("refOrden", refOrden);
             restTemplate.postForObject(
                     baseUrl + "/api/v1/stock/{sku}/" + accion, body, Object.class, sku);
+        } catch (org.springframework.web.client.HttpClientErrorException.Conflict ex) {
+            if ("reservar".equals(accion)) {
+                // OR-05: sin stock no se debe crear la orden (evita sobreventa)
+                throw new com.califorge.msorden.exception.StockInsuficienteException(sku);
+            }
+            log.warn("Inventario '{}': conflicto 409 para SKU '{}' ref '{}'", accion, sku, refOrden);
         } catch (RestClientException ex) {
             log.warn("Inventario '{}': SKU '{}' ref '{}' no disponible ({}): el flujo principal continua",
                     accion, sku, refOrden, ex.getMessage());

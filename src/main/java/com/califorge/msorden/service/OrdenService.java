@@ -332,8 +332,18 @@ public class OrdenService {
      */
     private void integrarTrasCreacion(Orden orden, List<OrdenItem> items, String azureSub) {
         try {
-            for (OrdenItem item : items) {
-                inventarioClient.reservar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+            List<OrdenItem> reservados = new ArrayList<>();
+            try {
+                for (OrdenItem item : items) {
+                    inventarioClient.reservar(item.getSku(), item.getCantidad(), String.valueOf(orden.getId()));
+                    reservados.add(item);
+                }
+            } catch (com.califorge.msorden.exception.StockInsuficienteException sinStock) {
+                // Compensacion: libera lo ya reservado y aborta (la transaccion revierte la orden).
+                for (OrdenItem r : reservados) {
+                    inventarioClient.liberar(r.getSku(), r.getCantidad(), String.valueOf(orden.getId()));
+                }
+                throw sinStock;
             }
             notificacionesClient.publicar(
                     "orden-" + orden.getId() + "-confirmada",

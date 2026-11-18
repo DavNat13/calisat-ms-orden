@@ -27,6 +27,13 @@ public class GlobalExceptionHandler {
                 .body(Map.of("mensaje", ex.getMessage()));
     }
 
+    @ExceptionHandler(StockInsuficienteException.class)
+    public ResponseEntity<Map<String, Object>> sinStock(StockInsuficienteException ex) {
+        log.warn("Orden rechazada por falta de stock: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("mensaje", ex.getMessage(), "sku", ex.getSku()));
+    }
+
     @ExceptionHandler(EstadoInvalidoException.class)
     public ResponseEntity<Map<String, Object>> estadoInvalido(EstadoInvalidoException ex) {
         log.warn("Estado desconocido rechazado: {}", ex.getMessage());
